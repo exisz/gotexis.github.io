@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Option Situation Lab</title>
+  <style>
+    :root{--bg:#0f172a;--panel:#111827;--panel2:#1f2937;--text:#e5e7eb;--muted:#9ca3af;--line:#334155;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--blue:#60a5fa}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+    header{padding:18px 22px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#111827,#0f172a)}
+    h1{margin:0 0 6px;font-size:24px} .sub{color:var(--muted);font-size:13px;line-height:1.5}.wrap{display:grid;grid-template-columns:330px 1fr;gap:14px;padding:14px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}.controls{position:sticky;top:12px;height:calc(100vh - 24px);overflow:auto}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}input,select,button{width:100%;border:1px solid var(--line);background:#0b1220;color:var(--text);border-radius:9px;padding:8px}button{cursor:pointer;background:#1f2937;font-weight:650}button:hover{background:#263244}.pill{display:inline-block;border:1px solid var(--line);background:#0b1220;border-radius:999px;padding:3px 8px;font-size:12px;color:var(--muted);margin:4px 4px 4px 0}.grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;margin-bottom:12px}.metric{background:#0b1220;border:1px solid var(--line);border-radius:12px;padding:10px}.metric .k{font-size:11px;color:var(--muted)}.metric .v{font-size:18px;font-weight:800;margin-top:4px}.good{color:var(--good)}.bad{color:#fca5a5}.warn{color:var(--warn)}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:650}tr:hover td{background:#172033}.small{font-size:12px;color:var(--muted);line-height:1.45}.strategy{border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0;background:#0b1220}.strategy b{display:block;margin-bottom:4px}.strategy .legs{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#cbd5e1}.strategy button{margin-top:8px;padding:7px}.split{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}.bar{height:10px;border-radius:999px;background:#1f2937;overflow:hidden}.bar span{display:block;height:100%;background:#64748b}.note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}canvas{width:100%;height:320px;background:#0b1220;border:1px solid var(--line);border-radius:12px;display:block}@media(max-width:1000px){.wrap{grid-template-columns:1fr}.controls{position:relative;height:auto}.grid{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Option Situation Lab</h1>
+  <div class="sub">用 JSON option chain 扫描四腿 debit 组合：put debit spread + call debit spread。重点看真实 combo debit、两端 payoff、风险收益和是否值得挂限价。</div>
+</header>
+<div class="wrap">
+  <aside class="card controls">
+    <label>Dataset</label><select id="dataset"></select>
+    <div id="meta" class="small"></div>
+    <div style="margin-top:10px"><span class="pill">Scan controls</span></div>
+    <div class="row">
+      <div><label>Down target</label><input id="downTarget" type="number" value="100"></div>
+      <div><label>Up target</label><input id="upTarget" type="number" value="250"></div>
+      <div><label>Sell put strike</label><input id="sellPut" type="number" value="100"></div>
+      <div><label>Sell call strike</label><input id="sellCall" type="number" value="250"></div>
+      <div><label>Max debit</label><input id="maxDebit" type="number" value="25" step="0.25"></div>
+      <div><label>Min profit / side</label><input id="minProfit" type="number" value="0" step="0.25"></div>
+    </div>
+    <div style="margin-top:10px"><span class="pill">Selected combo</span></div>
+    <div class="row">
+      <div><label>Buy put</label><select id="putBuy"></select></div>
+      <div><label>Sell put</label><select id="putSell"></select></div>
+      <div><label>Buy call</label><select id="callBuy"></select></div>
+      <div><label>Sell call</label><select id="callSell"></select></div>
+    </div>
+    <div class="row">
+      <div><label>Entry debit override</label><input id="debitOverride" type="number" step="0.05" placeholder="blank = mid"></div>
+      <div><label>Lots</label><input id="lots" type="number" value="1" min="1"></div>
+    </div>
+    <button id="rescan">Rescan</button>
+    <div class="note">所有价格都是每股 option price；1 组 combo = 100 股 multiplier。Market closed snapshot 只能当研究输入，不能当可成交报价。</div>
+  </aside>
+  <main>
+    <section class="card">
+      <div class="grid">
+        <div class="metric"><div class="k">Combo bid / mid / ask</div><div id="qLine" class="v">—</div></div>
+        <div class="metric"><div class="k">Max loss</div><div id="maxLoss" class="v">—</div></div>
+        <div class="metric"><div class="k">Down target P/L</div><div id="downPL" class="v">—</div></div>
+        <div class="metric"><div class="k">Up target P/L</div><div id="upPL" class="v">—</div></div>
+      </div>
+      <div class="grid">
+        <div class="metric"><div class="k">Lower BE / Upper BE</div><div id="beLine" class="v">—</div></div>
+        <div class="metric"><div class="k">Min reward/risk</div><div id="rrLine" class="v">—</div></div>
+        <div class="metric"><div class="k">Binary hit probability needed</div><div id="probLine" class="v">—</div></div>
+        <div class="metric"><div class="k">Verdict</div><div id="verdict" class="v">—</div></div>
+      </div>
+      <canvas id="payoff" width="1000" height="320"></canvas>
+      <div class="note" id="explain"></div>
+    </section>
+
+    <div class="split" style="margin-top:14px">
+      <section class="card">
+        <h3 style="margin:0 0 8px">Suggested combos from dataset</h3>
+        <div id="suggested"></div>
+      </section>
+      <section class="card">
+        <h3 style="margin:0 0 8px">Key insight</h3>
+        <div id="insight" class="small"></div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:14px">
+      <h3 style="margin:0 0 8px">Scanner results</h3>
+      <div class="small">排序优先看：两边都赚钱、min reward/risk 高、debit 低、quoted spread 不离谱。点击一行可载入组合。</div>
+      <table id="scanTable"></table>
+    </section>
+  </main>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let DATA=null, MAP=new Map();
+function mid(q){return q&&isFinite(q.bid)&&isFinite(q.ask)?(q.bid+q.ask)/2:NaN}
+function money(x){return (x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{maximumFractionDigits:0})}
+function px(x){return isFinite(x)?"$"+Number(x).toFixed(2):"—"}
+function opt(strike,type){const r=MAP.get(Number(strike));return r?r[type]:null}
+function legMid(strike,type){return mid(opt(strike,type))}
+function comboQuote(c){
+  const bp=opt(c.putBuy,'put'), sp=opt(c.putSell,'put'), bc=opt(c.callBuy,'call'), sc=opt(c.callSell,'call');
+  if(!bp||!sp||!bc||!sc)return null;
+  const bid=bp.bid-sp.ask+bc.bid-sc.ask;
+  const ask=bp.ask-sp.bid+bc.ask-sc.bid;
+  const m=legMid(c.putBuy,'put')-legMid(c.putSell,'put')+legMid(c.callBuy,'call')-legMid(c.callSell,'call');
+  return {bid,ask,mid:m,width:ask-bid};
+}
+function payoffValue(S,c){
+  const p=Math.max(c.putBuy-S,0)-Math.max(c.putSell-S,0);
+  const ca=Math.max(S-c.callBuy,0)-Math.max(S-c.callSell,0);
+  return p+ca;
+}
+function evaluate(c, debitOverride=null){
+  const q=comboQuote(c); if(!q)return null;
+  const debit=debitOverride!==null&&debitOverride!==''&&!isNaN(debitOverride)?Number(debitOverride):q.mid;
+  const lots=Number($('lots').value||1);
+  const downTarget=Number($('downTarget').value), upTarget=Number($('upTarget').value);
+  const downVal=payoffValue(downTarget,c), upVal=payoffValue(upTarget,c);
+  const downProfit=downVal-debit, upProfit=upVal-debit;
+  const minProfit=Math.min(downProfit,upProfit), avgWinVal=(downVal+upVal)/2;
+  const lowerBE=c.putBuy-debit, upperBE=c.callBuy+debit;
+  const minRR=minProfit/debit;
+  const pNeeded=avgWinVal>0?debit/avgWinVal:null;
+  return {c,q,debit,lots,downVal,upVal,downProfit,upProfit,minProfit,lowerBE,upperBE,minRR,pNeeded};
+}
+function verdict(e){
+  if(!e)return '—';
+  if(e.minProfit<=0)return ['bad','One side does not profit'];
+  if(e.minRR<0.35)return ['bad','Poor reward/risk'];
+  if(e.minRR<0.65)return ['warn','Possible but weak'];
+  if(e.minRR<1)return ['warn','Acceptable only if thesis is strong'];
+  return ['good','Good convexity'];
+}
+function setCombo(c){$('putBuy').value=c.putBuy;$('putSell').value=c.putSell;$('callBuy').value=c.callBuy;$('callSell').value=c.callSell;$('debitOverride').value='';renderSelected();}
+function renderSelected(){
+  const c={putBuy:+$('putBuy').value,putSell:+$('putSell').value,callBuy:+$('callBuy').value,callSell:+$('callSell').value};
+  const e=evaluate(c,$('debitOverride').value); if(!e)return;
+  const mult=100*e.lots, q=e.q;
+  $('qLine').textContent=`${q.bid.toFixed(2)} / ${q.mid.toFixed(2)} / ${q.ask.toFixed(2)}`;
+  $('maxLoss').textContent=money(e.debit*mult);
+  $('downPL').textContent=money(e.downProfit*mult); $('downPL').className='v '+(e.downProfit>=0?'good':'bad');
+  $('upPL').textContent=money(e.upProfit*mult); $('upPL').className='v '+(e.upProfit>=0?'good':'bad');
+  $('beLine').textContent=`${px(e.lowerBE)} / ${px(e.upperBE)}`;
+  $('rrLine').textContent=(e.minRR*100).toFixed(0)+'%';
+  $('probLine').textContent=e.pNeeded? (e.pNeeded*100).toFixed(0)+'%':'—';
+  const v=verdict(e); $('verdict').textContent=v[1]; $('verdict').className='v '+v[0];
+  $('explain').innerHTML=`Structure: BUY ${c.putBuy}P / SELL ${c.putSell}P + BUY ${c.callBuy}C / SELL ${c.callSell}C. At debit ${e.debit.toFixed(2)}, target values are ${e.downVal.toFixed(2)} downside and ${e.upVal.toFixed(2)} upside. If binary outcomes are hit-target vs total loss, the average hit probability needed is about ${(e.pNeeded*100).toFixed(1)}%.`;
+  drawPayoff(e);
+}
+function drawPayoff(e){
+  const cv=$('payoff'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height,m={l:60,r:20,t:20,b:34};ctx.clearRect(0,0,W,H);
+  const pmin=Math.min(...DATA.strikes.map(x=>x.strike),+DATA.defaultScan.downTarget)-20, pmax=Math.max(...DATA.strikes.map(x=>x.strike),+DATA.defaultScan.upTarget)+30;
+  let pts=[];for(let i=0;i<=260;i++){const S=pmin+(pmax-pmin)*i/260;pts.push([S,(payoffValue(S,e.c)-e.debit)*100*e.lots])}
+  const ys=pts.map(p=>p[1]),ymin=Math.min(...ys),ymax=Math.max(...ys);const xmap=S=>m.l+(S-pmin)/(pmax-pmin)*(W-m.l-m.r);const ymap=y=>m.t+(y-ymax)/(ymin-ymax)*(H-m.t-m.b);
+  ctx.strokeStyle='#334155';ctx.strokeRect(m.l,m.t,W-m.l-m.r,H-m.t-m.b);ctx.strokeStyle='#64748b';ctx.beginPath();ctx.moveTo(m.l,ymap(0));ctx.lineTo(W-m.r,ymap(0));ctx.stroke();
+  ctx.strokeStyle='#e5e7eb';ctx.lineWidth=2;ctx.beginPath();pts.forEach((p,i)=>{if(i)ctx.lineTo(xmap(p[0]),ymap(p[1]));else ctx.moveTo(xmap(p[0]),ymap(p[1]));});ctx.stroke();
+  ctx.fillStyle='#cbd5e1';ctx.font='12px system-ui';[e.c.putSell,e.c.putBuy,e.c.callBuy,e.c.callSell].forEach(s=>{const x=xmap(s);ctx.strokeStyle='#475569';ctx.beginPath();ctx.moveTo(x,m.t);ctx.lineTo(x,H-m.b);ctx.stroke();ctx.fillText(String(s),x-10,H-12)});
+  ctx.fillText(money(ymax),8,ymap(ymax)+4);ctx.fillText('$0',20,ymap(0)+4);ctx.fillText(money(ymin),8,ymap(ymin)-2);
+}
+function renderSuggested(){
+  $('suggested').innerHTML=(DATA.suggestedStrategies||[]).map(s=>{const e=evaluate(s.legs);const v=e?verdict(e):['bad','missing'];return `<div class="strategy"><b>${s.label}</b><div class="legs">${s.legs.putBuy}/${s.legs.putSell}P + ${s.legs.callBuy}/${s.legs.callSell}C</div><div class="small">mid ${e?e.debit.toFixed(2):'—'} · min P/L ${e?money(e.minProfit*100):'—'} · ${v[1]}</div><div class="small">${s.limitIdea||''}</div><button onclick='setCombo(${JSON.stringify(s.legs)})'>Load</button></div>`}).join('');
+}
+function scan(){
+  const sellPut=+$('sellPut').value,sellCall=+$('sellCall').value,maxDebit=+$('maxDebit').value,minProfit=+$('minProfit').value;
+  const strikes=DATA.strikes.map(x=>x.strike).sort((a,b)=>a-b), rows=[];
+  for(const pb of strikes.filter(x=>x>sellPut&&x<sellCall)) for(const cb of strikes.filter(x=>x>pb&&x<sellCall)){
+    if(cb>=sellCall)continue; const c={putBuy:pb,putSell:sellPut,callBuy:cb,callSell:sellCall}; const e=evaluate(c); if(!e)continue;
+    if(e.debit<=maxDebit && e.downProfit>=minProfit && e.upProfit>=minProfit) rows.push(e);
+  }
+  rows.sort((a,b)=>(b.minRR-a.minRR)||(a.debit-b.debit));
+  $('scanTable').innerHTML='<thead><tr><th>Combo</th><th>Bid/Mid/Ask</th><th>Debit</th><th>≤Down P/L</th><th>≥Up P/L</th><th>Min R/R</th><th>P needed</th><th>Verdict</th></tr></thead><tbody>'+rows.slice(0,80).map(e=>{const v=verdict(e);return `<tr onclick='setCombo(${JSON.stringify(e.c)})'><td>${e.c.putBuy}/${e.c.putSell}P + ${e.c.callBuy}/${e.c.callSell}C</td><td>${e.q.bid.toFixed(2)} / ${e.q.mid.toFixed(2)} / ${e.q.ask.toFixed(2)}</td><td>${e.debit.toFixed(2)}</td><td class="${e.downProfit>=0?'good':'bad'}">${money(e.downProfit*100)}</td><td class="${e.upProfit>=0?'good':'bad'}">${money(e.upProfit*100)}</td><td>${(e.minRR*100).toFixed(0)}%</td><td>${e.pNeeded?(e.pNeeded*100).toFixed(0)+'%':'—'}</td><td class="${v[0]}">${v[1]}</td></tr>`}).join('')+'</tbody>';
+  $('insight').innerHTML='For a symmetric 25-wide two-tail structure bought near 19-20 debit, maximum profit is only 5-6 points per share. That means risk/reward is poor even though it may be fillable near mid. A good scanner result should not only be fillable; it should also have enough payoff after paying the debit.';
+}
+async function loadManifest(){const m=await fetch('data/manifest.json').then(r=>r.json());$('dataset').innerHTML=m.datasets.map(d=>`<option value="${d.file}">${d.label}</option>`).join('');await loadData();}
+async function loadData(){DATA=await fetch($('dataset').value).then(r=>r.json());MAP=new Map(DATA.strikes.map(x=>[x.strike,x]));$('meta').innerHTML=`<br>${DATA.symbol} · expiry ${DATA.expiry} · underlying ${DATA.underlyingPrice} · ${DATA.marketState}<br>${(DATA.notes||[]).join('<br>')}`;
+  for(const id of ['putBuy','putSell','callBuy','callSell'])$(id).innerHTML=DATA.strikes.map(x=>`<option value="${x.strike}">${x.strike}</option>`).join('');
+  $('downTarget').value=DATA.defaultScan.downTarget;$('upTarget').value=DATA.defaultScan.upTarget;$('sellPut').value=DATA.defaultScan.sellPutStrike;$('sellCall').value=DATA.defaultScan.sellCallStrike;$('maxDebit').value=DATA.defaultScan.maxDebit;$('minProfit').value=DATA.defaultScan.minTargetProfit;
+  const first=DATA.suggestedStrategies[0].legs;$('putBuy').value=first.putBuy;$('putSell').value=first.putSell;$('callBuy').value=first.callBuy;$('callSell').value=first.callSell;
+  renderSuggested();renderSelected();scan();
+}
+['putBuy','putSell','callBuy','callSell','debitOverride','lots','downTarget','upTarget'].forEach(id=>$(id).addEventListener('input',renderSelected));
+['sellPut','sellCall','maxDebit','minProfit'].forEach(id=>$(id).addEventListener('input',scan));$('rescan').onclick=scan;$('dataset').onchange=loadData;loadManifest();
+</script>
+</body>
+</html>
